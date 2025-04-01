@@ -39,4 +39,9 @@ batter_dataset/
 *.pt
 *.pth
 *.onnx
-*.json 
+*.json
+
+# Cursor
+.cursor/
+.cursor.json
+cursor.json 
