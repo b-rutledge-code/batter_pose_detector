@@ -80,9 +80,24 @@ def find_potential_batters(bat_bbox, person_bboxes):
     bat_center_x = (bat_x1 + bat_x2) / 2
     bat_center_y = (bat_y1 + bat_y2) / 2
     
+    # Calculate bat's longest dimension
+    bat_width = bat_x2 - bat_x1
+    bat_height = bat_y2 - bat_y1
+    bat_longest_dim = max(bat_width, bat_height)
+    
     potential_batters = []
     for person_idx, person_bbox in enumerate(person_bboxes):
         px1, py1, px2, py2 = person_bbox
+        
+        # Calculate person's dimensions
+        person_width = px2 - px1
+        person_height = py2 - py1
+        person_longest_dim = max(person_width, person_height)
+        
+        # Skip if person is not at least 1.5x the bat's longest dimension. 
+        # this is so we dont pick up fielders who are far away from the bat
+        if person_longest_dim < bat_longest_dim * 1.5:
+            continue
         
         # Calculate overlap
         overlap_x = max(0, min(bat_x2, px2) - max(bat_x1, px1))
@@ -185,15 +200,27 @@ def process_frame(frame, model, pose, mp_drawing, width, height):
     
     return frame
 
-def detect_batter_pose(video_path, save_output=False, playback_fps=15, model_name='yolov8x.pt'):
-    """Main function to detect batter poses in video."""
+def detect_batter_pose(video_path, save_output=False, playback_fps=15, model_name='yolov8x.pt', start_frame=0):
+    """Main function to detect batter poses in video.
+    
+    Args:
+        video_path: Path to the video file
+        save_output: Whether to save the output video
+        playback_fps: Frame rate for playback
+        model_name: Name of the YOLO model to use
+        start_frame: Frame number to start processing from (0-based)
+    """
     # Initialize models and video capture
     model, pose, mp_drawing = init_models(model_name)
     cap, out, width, height, total_frames = setup_video_capture(video_path, save_output, playback_fps)
     if cap is None:
         return
     
-    frame_count = 0
+    # Set the starting frame
+    if start_frame > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    
+    frame_count = start_frame
     frame_delay = int(1000 / playback_fps)
     
     while cap.isOpened():
@@ -238,6 +265,8 @@ if __name__ == "__main__":
     parser.add_argument('--fps', type=int, default=15, help='Playback frame rate (default: 15)')
     parser.add_argument('--model', type=str, default='yolov8x.pt',
                       help='YOLO model to use (default: yolov8x.pt). Options: yolov8n.pt, yolov8s.pt, yolov8m.pt, yolov8l.pt, yolov8x.pt')
+    parser.add_argument('--start-frame', type=int, default=0,
+                      help='Frame number to start processing from (0-based, default: 0)')
     args = parser.parse_args()
     
-    detect_batter_pose(args.video_path, args.save, args.fps, args.model) 
+    detect_batter_pose(args.video_path, args.save, args.fps, args.model, args.start_frame) 
