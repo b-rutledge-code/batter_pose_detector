@@ -57,13 +57,12 @@ def process_detections(results, frame):
             cls = int(box.cls[0])
             class_name = r.names[cls]
             
-            # Draw detection box and label
-            color = (0, 255, 0) if class_name == "baseball bat" else (255, 0, 0)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, f"{class_name} {conf:.2f}", (x1, y1 - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            
             if class_name == "baseball bat" and conf > 0.5:
+                # Draw bat detection box and label
+                color = (0, 255, 0)  # Green for bats
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(frame, f"{class_name} {conf:.2f}", (x1, y1 - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
                 print(f"Found bat with confidence {conf:.2f}")
                 bat_bbox = (x1, y1, x2, y2)
             elif class_name == "person" and conf > 0.5:
