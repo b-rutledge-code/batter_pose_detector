@@ -125,14 +125,45 @@ def find_potential_batters(bat_bbox, person_bboxes):
     
     return None
 
-def process_pose(frame, person_bbox, pose, mp_drawing, width, height):
-    """Process pose detection for the identified batter."""
-    px1, py1, px2, py2 = person_bbox
-    padding = 20
-    roi_x1 = max(0, px1 - padding)
-    roi_y1 = max(0, py1 - padding)
-    roi_x2 = min(width, px2 + padding)
-    roi_y2 = min(height, py2 + padding)
+def roi_to_full_frame(roi_x, roi_y, roi_x1, roi_y1, roi_width, roi_height):
+    """Convert ROI coordinates to full frame coordinates.
+    
+    Args:
+        roi_x: x coordinate in ROI space (0-1 normalized)
+        roi_y: y coordinate in ROI space (0-1 normalized)
+        roi_x1: starting x coordinate of ROI in full frame
+        roi_y1: starting y coordinate of ROI in full frame
+        roi_width: width of ROI
+        roi_height: height of ROI
+        
+    Returns:
+        Tuple of (full_frame_x, full_frame_y)
+    """
+    # Convert from normalized (0-1) to ROI pixels
+    roi_pixel_x = roi_x * roi_width
+    roi_pixel_y = roi_y * roi_height
+    
+    # Convert to full frame coordinates
+    full_frame_x = roi_pixel_x + roi_x1
+    full_frame_y = roi_pixel_y + roi_y1
+    
+    return full_frame_x, full_frame_y
+
+def process_pose(frame, roi, bat_bbox, pose, mp_drawing):
+    """Process pose detection for the identified batter.
+    
+    Args:
+        frame: Full video frame
+        roi: Tuple of (x1, y1, x2, y2) for region of interest
+        bat_bbox: Tuple of (x1, y1, x2, y2) for bat bounding box
+        pose: MediaPipe pose object
+        mp_drawing: MediaPipe drawing utilities
+    """
+    roi_x1, roi_y1, roi_x2, roi_y2 = roi
+    
+    # Calculate ROI dimensions
+    roi_width = roi_x2 - roi_x1
+    roi_height = roi_y2 - roi_y1
     
     # Extract ROI and process pose
     roi = cv2.cvtColor(frame[roi_y1:roi_y2, roi_x1:roi_x2], cv2.COLOR_BGR2RGB)
@@ -140,6 +171,26 @@ def process_pose(frame, person_bbox, pose, mp_drawing, width, height):
     pose_results = pose.process(roi)
     
     if pose_results.pose_landmarks:
+        # Get hand landmarks and convert to full frame
+        left_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
+        right_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
+        
+        # Convert to full frame coordinates
+        left_wrist_full = roi_to_full_frame(
+            left_wrist.x, left_wrist.y,
+            roi_x1, roi_y1,
+            roi_width, roi_height
+        )
+        right_wrist_full = roi_to_full_frame(
+            right_wrist.x, right_wrist.y,
+            roi_x1, roi_y1,
+            roi_width, roi_height
+        )
+        
+        # Check if bat is above hands
+        if is_bat_above_hands(bat_bbox, left_wrist_full, right_wrist_full):
+            print("Bat is above hands!")
+        
         # Draw pose landmarks
         mp_drawing.draw_landmarks(
             roi_frame,
@@ -182,6 +233,33 @@ def handle_keyboard_input(key, playback_fps):
         print(f"Playback speed decreased to {playback_fps}fps")
     return playback_fps
 
+def is_bat_above_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand):
+    """Check if the bat's center is above both hands.
+    
+    Args:
+        bat_bbox: Tuple of (x1, y1, x2, y2) for bat bounding box in full frame
+        full_frame_left_hand: Tuple of (x, y) for left hand in full frame
+        full_frame_right_hand: Tuple of (x, y) for right hand in full frame
+        
+    Returns:
+        bool: True if bat's center is above both hands, False otherwise
+    """
+    if not bat_bbox or not full_frame_left_hand or not full_frame_right_hand:
+        return False
+        
+    bat_x1, bat_y1, bat_x2, bat_y2 = bat_bbox
+    left_hand_x, left_hand_y = full_frame_left_hand
+    right_hand_x, right_hand_y = full_frame_right_hand
+    
+    # Calculate bat's center y-coordinate
+    bat_center_y = (bat_y1 + bat_y2) / 2
+    
+    # Get the highest y-coordinate of the hands (lowest in image space)
+    highest_hand_y = max(left_hand_y, right_hand_y)
+    
+    # Check if the bat's center is above the highest hand
+    return bat_center_y < highest_hand_y
+
 def process_frame(frame, model, pose, mp_drawing, width, height):
     """Process a single frame for detections and pose."""
     # Process detections
@@ -193,7 +271,16 @@ def process_frame(frame, model, pose, mp_drawing, width, height):
     if bat_bbox and person_bboxes:
         batter_idx = find_potential_batters(bat_bbox, person_bboxes)
         if batter_idx is not None:
-            process_pose(frame, person_bboxes[batter_idx], pose, mp_drawing, width, height)
+            # Calculate ROI here
+            px1, py1, px2, py2 = person_bboxes[batter_idx]
+            padding = 20
+            roi = (
+                max(0, px1 - padding),
+                max(0, py1 - padding),
+                min(width, px2 + padding),
+                min(height, py2 + padding)
+            )
+            process_pose(frame, roi, bat_bbox, pose, mp_drawing)
     
     # Draw person boxes
     draw_person_boxes(frame, person_bboxes, batter_idx)
