@@ -7,7 +7,8 @@ A Python tool for detecting and analyzing baseball/softball batter poses using Y
 - Detects batters in video using YOLOv8
 - Identifies the closest person to the bat
 - Performs pose detection using MediaPipe
-- Saves pose data in JSON format
+- Detects bat position relative to hands
+- Determines if hands are at shoulder level
 - Supports video playback with frame rate control
 - Saves annotated output video
 
@@ -19,15 +20,14 @@ git clone https://github.com/yourusername/batter_pose_detector.git
 cd batter_pose_detector
 ```
 
-2. Create and activate a virtual environment:
+2. Install Poetry if you haven't already:
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+curl -sSL https://install.python-poetry.org | python3 -
 ```
 
 3. Install dependencies:
 ```bash
-pip install -r requirements.txt
+poetry install
 ```
 
 ## Usage
@@ -35,7 +35,7 @@ pip install -r requirements.txt
 Run the script with a video file:
 
 ```bash
-python detect_batter.py "path/to/your/video.mp4" [options]
+poetry run python detect_batter.py "path/to/your/video.mp4" [options]
 ```
 
 ### Options
@@ -47,14 +47,16 @@ python detect_batter.py "path/to/your/video.mp4" [options]
 ### Example
 
 ```bash
-python detect_batter.py "sample_video.mp4" --save --fps 30
+poetry run python detect_batter.py "sample_video.mp4" --save --fps 30
 ```
 
 ## Output
 
 - Annotated video with detected batters and pose landmarks
-- JSON files containing pose data in `batter_dataset/poses/`
-- Frame-by-frame detection information in the console
+- Frame-by-frame detection information in the console including:
+  - Bat position relative to hands
+  - Hand height relative to shoulders
+  - Detection confidence scores
 
 ## Controls
 

@@ -70,10 +70,10 @@ def test_are_hands_at_shoulders():
 
     # Test frame height (using 1000 pixels as a reasonable test size)
     frame_height = 1000
-    max_distance = frame_height * 0.05  # 5% of frame height
+    max_distance = frame_height * 0.02  # 2% of frame height
 
     # Test case 1: Hands at shoulder level
-    # Shoulders at y=500, hands within 5% of frame height
+    # Shoulders at y=500, hands within 2% of frame height
     left_hand = (50, 480)  # x, y (20 pixels above shoulders)
     right_hand = (150, 520)  # x, y (20 pixels below shoulders)
     left_shoulder = (40, 500)  # x, y
@@ -81,24 +81,24 @@ def test_are_hands_at_shoulders():
     assert are_hands_at_shoulders(left_hand, right_hand, left_shoulder, right_shoulder, frame_height), "Should detect hands at shoulder level"
 
     # Test case 2: Hands too far above shoulders
-    # Shoulders at y=500, hands more than 5% above
-    left_hand = (50, 400)  # x, y (100 pixels above shoulders)
-    right_hand = (150, 410)  # x, y (90 pixels above shoulders)
+    # Shoulders at y=500, hands more than 2% above
+    left_hand = (50, 300)  # x, y (200 pixels above shoulders)
+    right_hand = (150, 310)  # x, y (190 pixels above shoulders)
     left_shoulder = (40, 500)
     right_shoulder = (160, 500)
     assert not are_hands_at_shoulders(left_hand, right_hand, left_shoulder, right_shoulder, frame_height), "Should not detect hands at shoulder level when too high"
 
     # Test case 3: Hands too far below shoulders
-    # Shoulders at y=500, hands more than 5% below
-    left_hand = (50, 600)  # x, y (100 pixels below shoulders)
-    right_hand = (150, 610)  # x, y (110 pixels below shoulders)
+    # Shoulders at y=500, hands more than 2% below
+    left_hand = (50, 700)  # x, y (200 pixels below shoulders)
+    right_hand = (150, 710)  # x, y (210 pixels below shoulders)
     left_shoulder = (40, 500)
     right_shoulder = (160, 500)
     assert not are_hands_at_shoulders(left_hand, right_hand, left_shoulder, right_shoulder, frame_height), "Should not detect hands at shoulder level when too low"
 
     # Test case 4: Missing landmarks
     # Only left hand and left shoulder present
-    left_hand = (50, 480)
+    left_hand = (50, 495)
     right_hand = None
     left_shoulder = (40, 500)
     right_shoulder = None

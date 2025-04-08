@@ -161,57 +161,17 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing):
     """
     roi_x1, roi_y1, roi_x2, roi_y2 = roi
     
-    # Calculate ROI dimensions
-    roi_width = roi_x2 - roi_x1
-    roi_height = roi_y2 - roi_y1
-    
     # Extract ROI and process pose
-    roi = cv2.cvtColor(frame[roi_y1:roi_y2, roi_x1:roi_x2], cv2.COLOR_BGR2RGB)
+    roi_rgb = cv2.cvtColor(frame[roi_y1:roi_y2, roi_x1:roi_x2], cv2.COLOR_BGR2RGB)
     roi_frame = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
-    pose_results = pose.process(roi)
+    pose_results = pose.process(roi_rgb)
     
     if pose_results.pose_landmarks:
-        # Get hand landmarks and convert to full frame
-        left_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
-        right_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
-        left_shoulder = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER]
-        right_shoulder = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER]
-        
-        # Convert to full frame coordinates
-        left_wrist_full = roi_to_full_frame(
-            left_wrist.x, left_wrist.y,
-            roi_x1, roi_y1,
-            roi_width, roi_height
-        )
-        right_wrist_full = roi_to_full_frame(
-            right_wrist.x, right_wrist.y,
-            roi_x1, roi_y1,
-            roi_width, roi_height
-        )
-        left_shoulder_full = roi_to_full_frame(
-            left_shoulder.x, left_shoulder.y,
-            roi_x1, roi_y1,
-            roi_width, roi_height
-        )
-        right_shoulder_full = roi_to_full_frame(
-            right_shoulder.x, right_shoulder.y,
-            roi_x1, roi_y1,
-            roi_width, roi_height
-        )
-        
-        # Check if bat is above hands
-        if is_bat_above_hands(bat_bbox, left_wrist_full, right_wrist_full):
-            print("Bat is above hands!")
-            
-        # Check if bat is in hands
-        if is_bat_in_hands(bat_bbox, left_wrist_full, right_wrist_full):
-            print("Bat is in hands!")
-            
-        # Check if hands are at shoulder level
-        if are_hands_at_shoulders(left_wrist_full, right_wrist_full, 
-                                left_shoulder_full, right_shoulder_full,
-                                frame.shape[0]):
-            print("Hands are at shoulder level!")
+        # Check if batter is in stance
+        if is_batting_stance(bat_bbox, pose_results, roi, frame.shape[0]):
+            print("Batter is in stance!")
+            cv2.putText(frame, "BATTER IN STANCE", (10, 60),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         
         # Draw pose landmarks
         mp_drawing.draw_landmarks(
@@ -336,12 +296,72 @@ def are_hands_at_shoulders(full_frame_left_hand, full_frame_right_hand, full_fra
     right_hand_y = full_frame_right_hand[1]
     
     # Maximum vertical distance allowed between hands and shoulders
-    # Using 5% of frame height as the threshold
-    max_vertical_distance = frame_height * 0.05
+    # Using 2% of frame height as the threshold
+    max_vertical_distance = frame_height * 0.02
     
     # Check if both hands are within the allowed distance from shoulder level
     return (abs(left_hand_y - shoulder_level) <= max_vertical_distance and
             abs(right_hand_y - shoulder_level) <= max_vertical_distance)
+
+def is_batting_stance(bat_bbox, pose_results, roi, frame_height):
+    """Check if the batter is in a proper batting stance.
+    
+    A proper batting stance requires:
+    1. The bat is being held in the hands
+    2. The bat is above the hands
+    3. The hands are at shoulder level
+    
+    Args:
+        bat_bbox: Tuple of (x1, y1, x2, y2) for bat bounding box in full frame
+        pose_results: MediaPipe pose detection results
+        roi: Tuple of (x1, y1, x2, y2) for region of interest
+        frame_height: Height of the frame in pixels
+        
+    Returns:
+        bool: True if all conditions for a proper batting stance are met, False otherwise
+    """
+    if not pose_results.pose_landmarks:
+        return False
+        
+    # Extract ROI coordinates
+    roi_x1, roi_y1, roi_x2, roi_y2 = roi
+    roi_width = roi_x2 - roi_x1
+    roi_height = roi_y2 - roi_y1
+        
+    # Get hand and shoulder landmarks
+    left_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
+    right_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
+    left_shoulder = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER]
+    right_shoulder = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER]
+    
+    # Convert to full frame coordinates
+    full_frame_left_hand = roi_to_full_frame(
+        left_wrist.x, left_wrist.y,
+        roi_x1, roi_y1,
+        roi_width, roi_height
+    )
+    full_frame_right_hand = roi_to_full_frame(
+        right_wrist.x, right_wrist.y,
+        roi_x1, roi_y1,
+        roi_width, roi_height
+    )
+    full_frame_left_shoulder = roi_to_full_frame(
+        left_shoulder.x, left_shoulder.y,
+        roi_x1, roi_y1,
+        roi_width, roi_height
+    )
+    full_frame_right_shoulder = roi_to_full_frame(
+        right_shoulder.x, right_shoulder.y,
+        roi_x1, roi_y1,
+        roi_width, roi_height
+    )
+    
+    # Perform the checks using full frame coordinates
+    return (is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand) and
+            is_bat_above_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand) and
+            are_hands_at_shoulders(full_frame_left_hand, full_frame_right_hand,
+                                 full_frame_left_shoulder, full_frame_right_shoulder,
+                                 frame_height))
 
 def process_frame(frame, model, pose, mp_drawing, width, height):
     """Process a single frame for detections and pose."""
