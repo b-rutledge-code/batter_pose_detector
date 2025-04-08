@@ -174,6 +174,8 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing):
         # Get hand landmarks and convert to full frame
         left_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
         right_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
+        left_shoulder = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER]
+        right_shoulder = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER]
         
         # Convert to full frame coordinates
         left_wrist_full = roi_to_full_frame(
@@ -186,6 +188,16 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing):
             roi_x1, roi_y1,
             roi_width, roi_height
         )
+        left_shoulder_full = roi_to_full_frame(
+            left_shoulder.x, left_shoulder.y,
+            roi_x1, roi_y1,
+            roi_width, roi_height
+        )
+        right_shoulder_full = roi_to_full_frame(
+            right_shoulder.x, right_shoulder.y,
+            roi_x1, roi_y1,
+            roi_width, roi_height
+        )
         
         # Check if bat is above hands
         if is_bat_above_hands(bat_bbox, left_wrist_full, right_wrist_full):
@@ -194,6 +206,12 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing):
         # Check if bat is in hands
         if is_bat_in_hands(bat_bbox, left_wrist_full, right_wrist_full):
             print("Bat is in hands!")
+            
+        # Check if hands are at shoulder level
+        if are_hands_at_shoulders(left_wrist_full, right_wrist_full, 
+                                left_shoulder_full, right_shoulder_full,
+                                frame.shape[0]):
+            print("Hands are at shoulder level!")
         
         # Draw pose landmarks
         mp_drawing.draw_landmarks(
@@ -258,11 +276,8 @@ def is_bat_above_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand):
     # Calculate bat's center y-coordinate
     bat_center_y = (bat_y1 + bat_y2) / 2
     
-    # Get the highest y-coordinate of the hands (lowest in image space)
-    highest_hand_y = max(left_hand_y, right_hand_y)
-    
-    # Check if the bat's center is above the highest hand
-    return bat_center_y < highest_hand_y
+    # Check if the bat's center is above both hands
+    return bat_center_y < left_hand_y and bat_center_y < right_hand_y
 
 def is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand):
     """Check if the bat is being held at the bottom by the batter's hands.
@@ -293,6 +308,40 @@ def is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand):
     
     return (hand_distance <= max_hand_distance and  # Hands are close together
             abs(max(left_y, right_y) - bat_bottom_y) <= max_vertical_distance)  # Hands are near bat bottom
+
+def are_hands_at_shoulders(full_frame_left_hand, full_frame_right_hand, full_frame_left_shoulder, full_frame_right_shoulder, frame_height):
+    """Check if the batter's hands are at shoulder level.
+    
+    Args:
+        full_frame_left_hand: Tuple of (x, y) for left hand in full frame
+        full_frame_right_hand: Tuple of (x, y) for right hand in full frame
+        full_frame_left_shoulder: Tuple of (x, y) for left shoulder in full frame
+        full_frame_right_shoulder: Tuple of (x, y) for right shoulder in full frame
+        frame_height: Height of the frame in pixels
+        
+    Returns:
+        bool: True if hands are at shoulder level, False otherwise
+    """
+    if not all([full_frame_left_hand, full_frame_right_hand, 
+                full_frame_left_shoulder, full_frame_right_shoulder]):
+        return False
+        
+    # Get shoulder y-coordinates (average of left and right)
+    left_shoulder_y = full_frame_left_shoulder[1]
+    right_shoulder_y = full_frame_right_shoulder[1]
+    shoulder_level = (left_shoulder_y + right_shoulder_y) / 2
+    
+    # Get hand y-coordinates
+    left_hand_y = full_frame_left_hand[1]
+    right_hand_y = full_frame_right_hand[1]
+    
+    # Maximum vertical distance allowed between hands and shoulders
+    # Using 5% of frame height as the threshold
+    max_vertical_distance = frame_height * 0.05
+    
+    # Check if both hands are within the allowed distance from shoulder level
+    return (abs(left_hand_y - shoulder_level) <= max_vertical_distance and
+            abs(right_hand_y - shoulder_level) <= max_vertical_distance)
 
 def process_frame(frame, model, pose, mp_drawing, width, height):
     """Process a single frame for detections and pose."""
