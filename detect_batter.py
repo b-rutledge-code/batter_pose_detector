@@ -190,6 +190,10 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing):
         # Check if bat is above hands
         if is_bat_above_hands(bat_bbox, left_wrist_full, right_wrist_full):
             print("Bat is above hands!")
+            
+        # Check if bat is in hands
+        if is_bat_in_hands(bat_bbox, left_wrist_full, right_wrist_full):
+            print("Bat is in hands!")
         
         # Draw pose landmarks
         mp_drawing.draw_landmarks(
@@ -259,6 +263,36 @@ def is_bat_above_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand):
     
     # Check if the bat's center is above the highest hand
     return bat_center_y < highest_hand_y
+
+def is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand):
+    """Check if the bat is being held at the bottom by the batter's hands.
+    
+    Args:
+        bat_bbox: Tuple of (x1, y1, x2, y2) for bat bounding box in full frame
+        full_frame_left_hand: Tuple of (x, y) for left hand in full frame
+        full_frame_right_hand: Tuple of (x, y) for right hand in full frame
+        
+    Returns:
+        bool: True if bat is being held at the bottom by hands, False otherwise
+    """
+    if not bat_bbox or not full_frame_left_hand or not full_frame_right_hand:
+        return False
+        
+    # Get bat bottom (highest y-coordinate since y increases downward)
+    bat_x1, bat_y1, bat_x2, bat_y2 = bat_bbox
+    bat_bottom_y = max(bat_y1, bat_y2)    # Bottom of bat
+    
+    # Get hands' positions
+    left_x, left_y = full_frame_left_hand
+    right_x, right_y = full_frame_right_hand
+    
+    # Check if hands are close together and near bat bottom
+    hand_distance = abs(left_x - right_x)
+    max_hand_distance = 50  # Maximum distance between hands in pixels
+    max_vertical_distance = 50  # Maximum vertical distance between hands and bat bottom
+    
+    return (hand_distance <= max_hand_distance and  # Hands are close together
+            abs(max(left_y, right_y) - bat_bottom_y) <= max_vertical_distance)  # Hands are near bat bottom
 
 def process_frame(frame, model, pose, mp_drawing, width, height):
     """Process a single frame for detections and pose."""
