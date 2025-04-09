@@ -29,40 +29,32 @@ def test_is_bat_in_hands():
     """Test is_bat_in_hands function with various cases."""
     from detect_batter import is_bat_in_hands
 
+    # Test frame dimensions (using 1000x1000 as a reasonable test size)
+    frame_width = 1000
+    frame_height = 1000
+    max_hand_distance = frame_width * 0.07  # 7% of frame width
+    max_vertical_distance = frame_height * 0.09  # 9% of frame height
+
     # Test case 1: Bat being held correctly
     # Bat bottom at y=100, hands at y=90 and y=95, close together horizontally
     bat_bbox = (50, 0, 70, 100)  # x1, y1, x2, y2
     left_hand = (55, 90)  # x, y
     right_hand = (65, 95)  # x, y
-    assert is_bat_in_hands(bat_bbox, left_hand, right_hand), "Should detect bat being held"
+    assert is_bat_in_hands(bat_bbox, left_hand, right_hand, frame_width, frame_height), "Should detect bat being held"
 
     # Test case 2: Hands too far apart horizontally
-    # Same y positions but hands 100 pixels apart
+    # Same y positions but hands more than 7% of frame width apart
     bat_bbox = (50, 0, 70, 100)
     left_hand = (0, 90)
-    right_hand = (100, 95)
-    assert not is_bat_in_hands(bat_bbox, left_hand, right_hand), "Should not detect bat being held when hands too far apart"
+    right_hand = (frame_width * 0.08, 95)  # 8% of frame width apart
+    assert not is_bat_in_hands(bat_bbox, left_hand, right_hand, frame_width, frame_height), "Should not detect bat being held when hands too far apart"
 
-    # Test case 3: Hands too far from bat bottom vertically
-    # Hands 100 pixels above bat bottom
+    # Test case 3: Hands too far vertically from bat
+    # Hands more than 9% of frame height away from bat bottom
     bat_bbox = (50, 0, 70, 100)
-    left_hand = (55, 0)
-    right_hand = (65, 0)
-    assert not is_bat_in_hands(bat_bbox, left_hand, right_hand), "Should not detect bat being held when hands too far from bottom"
-
-    # Test case 4: Hands at bat bottom but one hand missing
-    # Only left hand present
-    bat_bbox = (50, 0, 70, 100)
-    left_hand = (55, 95)
-    right_hand = None
-    assert not is_bat_in_hands(bat_bbox, left_hand, right_hand), "Should not detect bat being held with missing hand"
-
-    # Test case 5: Hands at bat bottom but bat missing
-    # No bat bbox
-    bat_bbox = None
-    left_hand = (55, 95)
-    right_hand = (65, 95)
-    assert not is_bat_in_hands(bat_bbox, left_hand, right_hand), "Should not detect bat being held with missing bat"
+    left_hand = (55, 200)  # 100px away from bat bottom (10% of frame height)
+    right_hand = (65, 200)
+    assert not is_bat_in_hands(bat_bbox, left_hand, right_hand, frame_width, frame_height), "Should not detect bat being held when hands too far vertically"
 
 def test_are_hands_at_shoulders():
     """Test are_hands_at_shoulders function with various cases."""

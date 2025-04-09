@@ -5,11 +5,18 @@ import argparse
 from pathlib import Path
 from ultralytics import YOLO
 
+# Feature flag to control batter detection method
+USE_POSITION_DETECTION = True  # True = use position model, False = use closest-to-bat
+
 def init_models(model_name='yolov8x.pt'):
     """Initialize YOLO and MediaPipe models."""
     print("Initializing models...")
     print(f"Loading YOLO model: {model_name}")
     yolo_model = YOLO(model_name)
+    
+    # Add position model for player detection
+    print("Loading position model: weights-pos-v7.pt")
+    position_model = YOLO('weights-pos-v7.pt')
     
     mp_pose = mp.solutions.pose
     mp_drawing = mp.solutions.drawing_utils
@@ -18,7 +25,7 @@ def init_models(model_name='yolov8x.pt'):
         min_tracking_confidence=0.5,
         model_complexity=2
     )
-    return yolo_model, pose, mp_drawing
+    return yolo_model, position_model, pose, mp_drawing
 
 def setup_video_capture(video_path, save_output=False, playback_fps=15):
     """Setup video capture and writer."""
@@ -44,7 +51,8 @@ def setup_video_capture(video_path, save_output=False, playback_fps=15):
     
     return cap, out, width, height, total_frames
 
-def process_detections(results, frame):
+# commented out because unneeded, will remove when new method is working
+# def process_detections(results, frame):
     """Process YOLO detection results to find bats and people."""
     bat_bbox = None
     person_bboxes = []
@@ -236,16 +244,23 @@ def is_bat_above_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand):
     # Calculate bat's center y-coordinate
     bat_center_y = (bat_y1 + bat_y2) / 2
     
+    # Print debug info
+    print(f"Bat center Y: {bat_center_y:.1f}")
+    print(f"Left hand Y: {left_hand_y:.1f}")
+    print(f"Right hand Y: {right_hand_y:.1f}")
+    
     # Check if the bat's center is above both hands
     return bat_center_y < left_hand_y and bat_center_y < right_hand_y
 
-def is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand):
+def is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand, frame_width, frame_height):
     """Check if the bat is being held at the bottom by the batter's hands.
     
     Args:
         bat_bbox: Tuple of (x1, y1, x2, y2) for bat bounding box in full frame
         full_frame_left_hand: Tuple of (x, y) for left hand in full frame
         full_frame_right_hand: Tuple of (x, y) for right hand in full frame
+        frame_width: Width of the frame in pixels
+        frame_height: Height of the frame in pixels
         
     Returns:
         bool: True if bat is being held at the bottom by hands, False otherwise
@@ -263,8 +278,12 @@ def is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand):
     
     # Check if hands are close together and near bat bottom
     hand_distance = abs(left_x - right_x)
-    max_hand_distance = 50  # Maximum distance between hands in pixels
-    max_vertical_distance = 50  # Maximum vertical distance between hands and bat bottom
+    max_hand_distance = frame_width * 0.07  # 5% of frame width
+    max_vertical_distance = frame_height * 0.09  # 5% of frame height
+    
+    # Log the actual distances in pixels
+    print(f"Hand distance: {hand_distance:.1f}px (max: {max_hand_distance:.1f}px)")
+    print(f"Vertical distance: {abs(max(left_y, right_y) - bat_bottom_y):.1f}px (max: {max_vertical_distance:.1f}px)")
     
     return (hand_distance <= max_hand_distance and  # Hands are close together
             abs(max(left_y, right_y) - bat_bottom_y) <= max_vertical_distance)  # Hands are near bat bottom
@@ -298,6 +317,12 @@ def are_hands_at_shoulders(full_frame_left_hand, full_frame_right_hand, full_fra
     # Maximum vertical distance allowed between hands and shoulders
     # Using 2% of frame height as the threshold
     max_vertical_distance = frame_height * 0.02
+    
+    # Print debug info
+    print(f"Shoulder level Y: {shoulder_level:.1f}")
+    print(f"Left hand Y: {left_hand_y:.1f}")
+    print(f"Right hand Y: {right_hand_y:.1f}")
+    print(f"Max allowed distance: {max_vertical_distance:.1f}")
     
     # Check if both hands are within the allowed distance from shoulder level
     return (abs(left_hand_y - shoulder_level) <= max_vertical_distance and
@@ -357,36 +382,87 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height):
     )
     
     # Perform the checks using full frame coordinates
-    return (is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand) and
+    return (is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand, roi_width, roi_height) and
             is_bat_above_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand) and
             are_hands_at_shoulders(full_frame_left_hand, full_frame_right_hand,
                                  full_frame_left_shoulder, full_frame_right_shoulder,
                                  frame_height))
 
-def process_frame(frame, model, pose, mp_drawing, width, height):
+def process_frame(frame, model, position_model, pose, mp_drawing, width, height):
     """Process a single frame for detections and pose."""
-    # Process detections
+    # Run YOLO detection
     results = model(frame)
-    bat_bbox, person_bboxes = process_detections(results, frame)
     
-    # Find and process potential batters
-    batter_idx = None
-    if bat_bbox and person_bboxes:
-        batter_idx = find_potential_batters(bat_bbox, person_bboxes)
-        if batter_idx is not None:
-            # Calculate ROI here
-            px1, py1, px2, py2 = person_bboxes[batter_idx]
-            padding = 20
-            roi = (
-                max(0, px1 - padding),
-                max(0, py1 - padding),
-                min(width, px2 + padding),
-                min(height, py2 + padding)
-            )
-            process_pose(frame, roi, bat_bbox, pose, mp_drawing)
-    
-    # Draw person boxes
-    draw_person_boxes(frame, person_bboxes, batter_idx)
+    # Process YOLO results to get bat
+    bat_bbox = None
+    for r in results:
+        boxes = r.boxes
+        for box in boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            conf = float(box.conf[0])
+            cls = int(box.cls[0])
+            class_name = r.names[cls]
+            
+            if class_name == "baseball bat" and conf > 0.5:
+                bat_bbox = (x1, y1, x2, y2)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, f"{class_name} {conf:.2f}", (x1, y1 - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                print(f"Found bat with confidence {conf:.2f}")
+                break
+
+    # Get batter bbox
+    batter_bbox = None
+    if USE_POSITION_DETECTION:
+        # Use position model
+        position_results = position_model(frame)
+        for r in position_results:
+            boxes = r.boxes
+            for box in boxes:
+                cls = int(box.cls[0])
+                conf = float(box.conf[0])
+                if r.names[cls] == "Batter" and conf > 0.7:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    batter_bbox = (x1, y1, x2, y2)
+                    print(f"BATTER DETECTED BY POSITION! Confidence: {conf:.2f}")
+                    break
+            if batter_bbox:
+                break
+    else:
+        # Use old method - find closest person to bat
+        person_bboxes = []
+        for r in results:
+            boxes = r.boxes
+            for box in boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                conf = float(box.conf[0])
+                cls = int(box.cls[0])
+                if r.names[cls] == "person" and conf > 0.5:
+                    person_bboxes.append((x1, y1, x2, y2))
+                    print(f"Found person with confidence {conf:.2f}")
+        
+        if bat_bbox and person_bboxes:
+            batter_idx = find_potential_batters(bat_bbox, person_bboxes)
+            if batter_idx is not None:
+                batter_bbox = person_bboxes[batter_idx]
+
+    # Process pose if we found both bat and batter
+    if bat_bbox and batter_bbox:
+        # Calculate ROI
+        px1, py1, px2, py2 = batter_bbox
+        padding = 20
+        roi = (
+            max(0, px1 - padding),
+            max(0, py1 - padding),
+            min(width, px2 + padding),
+            min(height, py2 + padding)
+        )
+        process_pose(frame, roi, bat_bbox, pose, mp_drawing)
+
+        # Draw batter box
+        cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 0, 255), 2)
+        cv2.putText(frame, "BATTER", (px1, py1-10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     
     return frame
 
@@ -401,7 +477,7 @@ def detect_batter_pose(video_path, save_output=False, playback_fps=15, model_nam
         start_frame: Frame number to start processing from (0-based)
     """
     # Initialize models and video capture
-    model, pose, mp_drawing = init_models(model_name)
+    model, position_model, pose, mp_drawing = init_models(model_name)
     cap, out, width, height, total_frames = setup_video_capture(video_path, save_output, playback_fps)
     if cap is None:
         return
@@ -425,7 +501,7 @@ def detect_batter_pose(video_path, save_output=False, playback_fps=15, model_nam
         draw_frame_info(frame, frame_count, total_frames, height)
         
         # Process frame
-        frame = process_frame(frame, model, pose, mp_drawing, width, height)
+        frame = process_frame(frame, model, position_model, pose, mp_drawing, width, height)
         
         # Save and display frame
         if save_output:
