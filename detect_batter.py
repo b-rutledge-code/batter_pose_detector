@@ -4,6 +4,8 @@ import numpy as np
 import argparse
 from pathlib import Path
 from ultralytics import YOLO
+import time
+import math
 
 # Feature flag to control batter detection method
 USE_POSITION_DETECTION = True  # True = use position model, False = use closest-to-bat
@@ -157,7 +159,7 @@ def roi_to_full_frame(roi_x, roi_y, roi_x1, roi_y1, roi_width, roi_height):
     
     return full_frame_x, full_frame_y
 
-def process_pose(frame, roi, bat_bbox, pose, mp_drawing):
+def process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count):
     """Process pose detection for the identified batter.
     
     Args:
@@ -166,6 +168,7 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing):
         bat_bbox: Tuple of (x1, y1, x2, y2) for bat bounding box
         pose: MediaPipe pose object
         mp_drawing: MediaPipe drawing utilities
+        frame_count: Current frame number
     """
     roi_x1, roi_y1, roi_x2, roi_y2 = roi
     
@@ -180,6 +183,15 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing):
             print("Batter is in stance!")
             cv2.putText(frame, "BATTER IN STANCE", (10, 60),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            
+            # Save the frame only if 100 frames have passed since last save
+            if not hasattr(process_pose, 'last_stance_frame') or frame_count - process_pose.last_stance_frame >= 100:
+                output_dir = Path("stance_frames")
+                output_dir.mkdir(exist_ok=True)
+                frame_path = output_dir / f"stance_{int(time.time())}.jpg"
+                cv2.imwrite(str(frame_path), frame)
+                print(f"Saved stance frame to {frame_path}")
+                process_pose.last_stance_frame = frame_count
         
         # Draw pose landmarks
         mp_drawing.draw_landmarks(
@@ -328,6 +340,57 @@ def are_hands_at_shoulders(full_frame_left_hand, full_frame_right_hand, full_fra
     return (abs(left_hand_y - shoulder_level) <= max_vertical_distance and
             abs(right_hand_y - shoulder_level) <= max_vertical_distance)
 
+def are_knees_bent(full_frame_left_knee, full_frame_right_knee, full_frame_left_hip, full_frame_right_hip):
+    """Check if the batter's knees are bent in a proper batting stance.
+    
+    Args:
+        full_frame_left_knee: Tuple of (x, y) for left knee in full frame, or None if not visible
+        full_frame_right_knee: Tuple of (x, y) for right knee in full frame, or None if not visible
+        full_frame_left_hip: Tuple of (x, y) for left hip in full frame, or None if not visible
+        full_frame_right_hip: Tuple of (x, y) for right hip in full frame, or None if not visible
+        
+    Returns:
+        bool: True if knees are bent appropriately, False if not bent or if legs are not visible
+    """
+    # If we can't see any complete leg (knee + hip), return True
+    if not ((full_frame_left_knee and full_frame_left_hip) or 
+            (full_frame_right_knee and full_frame_right_hip)):
+        print("No complete legs visible - assuming proper knee bend")
+        return True
+        
+    # Define minimum angle threshold (in degrees)
+    min_angle = 15  # Minimum angle between hip and knee
+        
+    # Check left leg if visible
+    if full_frame_left_knee and full_frame_left_hip:
+        # Calculate angle between hip and knee
+        dx = full_frame_left_knee[0] - full_frame_left_hip[0]
+        dy = full_frame_left_knee[1] - full_frame_left_hip[1]
+        angle = abs(math.degrees(math.atan2(dy, dx)))
+        print(f"Left knee angle: {angle:.1f}°")
+        
+        if angle >= min_angle:
+            return True
+            
+    # Check right leg if visible
+    if full_frame_right_knee and full_frame_right_hip:
+        # Calculate angle between hip and knee
+        dx = full_frame_right_knee[0] - full_frame_right_hip[0]
+        dy = full_frame_right_knee[1] - full_frame_right_hip[1]
+        angle = abs(math.degrees(math.atan2(dy, dx)))
+        print(f"Right knee angle: {angle:.1f}°")
+        
+        if angle >= min_angle:
+            return True
+            
+    # If we can see at least one complete leg but it's not bent properly, return False
+    if ((full_frame_left_knee and full_frame_left_hip) or 
+        (full_frame_right_knee and full_frame_right_hip)):
+        print("Visible leg(s) not bent properly")
+        return False
+        
+    return True
+
 def is_batting_stance(bat_bbox, pose_results, roi, frame_height):
     """Check if the batter is in a proper batting stance.
     
@@ -388,7 +451,7 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height):
                                  full_frame_left_shoulder, full_frame_right_shoulder,
                                  frame_height))
 
-def process_frame(frame, model, position_model, pose, mp_drawing, width, height):
+def process_frame(frame, model, position_model, pose, mp_drawing, width, height, frame_count):
     """Process a single frame for detections and pose."""
     # Run YOLO detection
     results = model(frame)
@@ -457,7 +520,7 @@ def process_frame(frame, model, position_model, pose, mp_drawing, width, height)
             min(width, px2 + padding),
             min(height, py2 + padding)
         )
-        process_pose(frame, roi, bat_bbox, pose, mp_drawing)
+        process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count)
 
         # Draw batter box
         cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 0, 255), 2)
@@ -501,7 +564,7 @@ def detect_batter_pose(video_path, save_output=False, playback_fps=15, model_nam
         draw_frame_info(frame, frame_count, total_frames, height)
         
         # Process frame
-        frame = process_frame(frame, model, position_model, pose, mp_drawing, width, height)
+        frame = process_frame(frame, model, position_model, pose, mp_drawing, width, height, frame_count)
         
         # Save and display frame
         if save_output:
