@@ -135,9 +135,65 @@ def test_is_bat_above_hands():
     right_hand = (65, 120)
     assert not is_bat_above_hands(bat_bbox, left_hand, right_hand), "Should not detect bat above both hands with missing bat"
 
+def test_are_knees_bent():
+    """Test are_knees_bent function with various cases."""
+    from detect_batter import are_knees_bent
+    from mediapipe.framework.formats import landmark_pb2
+
+    def create_landmark(x, y):
+        landmark = landmark_pb2.NormalizedLandmark()
+        landmark.x = x
+        landmark.y = y
+        return landmark
+
+    # Test case 1: No legs visible - should return True
+    assert are_knees_bent(None, None, None, None), "Should return True when no legs are visible"
+
+    # Test case 2: Only left leg visible and bent (12 degrees) - should return True
+    left_knee = create_landmark(105.7, 121.4)  # 12 degree angle (dx=5.7, dy=21.4, dx/dy≈0.213)
+    left_hip = create_landmark(100, 100)
+    assert are_knees_bent(left_knee, None, left_hip, None), "Should return True when only left leg is visible and bent"
+
+    # Test case 3: Only left leg visible and straight (5 degrees) - should return False
+    left_knee = create_landmark(100, 108.7)  # 5 degree angle (dx=0, dy=8.7, dx/dy≈0)
+    left_hip = create_landmark(100, 100)
+    assert not are_knees_bent(left_knee, None, left_hip, None), "Should return False when only left leg is visible and straight"
+
+    # Test case 4: Only right leg visible and bent (12 degrees) - should return True
+    right_knee = create_landmark(294.3, 121.4)  # 12 degree angle (dx=5.7, dy=21.4, dx/dy≈0.213)
+    right_hip = create_landmark(300, 100)
+    assert are_knees_bent(None, right_knee, None, right_hip), "Should return True when only right leg is visible and bent"
+
+    # Test case 5: Only right leg visible and straight (5 degrees) - should return False
+    right_knee = create_landmark(300, 108.7)  # 5 degree angle (dx=0, dy=8.7, dx/dy≈0)
+    right_hip = create_landmark(300, 100)
+    assert not are_knees_bent(None, right_knee, None, right_hip), "Should return False when only right leg is visible and straight"
+
+    # Test case 6: Both legs visible, left straight (5 degrees), right bent (12 degrees) - should return False
+    left_knee = create_landmark(100, 108.7)  # 5 degree angle
+    right_knee = create_landmark(294.3, 121.4)  # 12 degree angle
+    left_hip = create_landmark(100, 100)
+    right_hip = create_landmark(300, 100)
+    assert not are_knees_bent(left_knee, right_knee, left_hip, right_hip), "Should return False when left leg is straight and right leg is bent"
+
+    # Test case 7: Both legs visible, right straight (5 degrees), left bent (12 degrees) - should return False
+    left_knee = create_landmark(105.7, 121.4)  # 12 degree angle
+    right_knee = create_landmark(300, 108.7)  # 5 degree angle
+    left_hip = create_landmark(100, 100)
+    right_hip = create_landmark(300, 100)
+    assert not are_knees_bent(left_knee, right_knee, left_hip, right_hip), "Should return False when right leg is straight and left leg is bent"
+
+    # Test case 8: Both legs visible and both bent (12 degrees) - should return True
+    left_knee = create_landmark(105.7, 121.4)  # 12 degree angle
+    right_knee = create_landmark(294.3, 121.4)  # 12 degree angle
+    left_hip = create_landmark(100, 100)
+    right_hip = create_landmark(300, 100)
+    assert are_knees_bent(left_knee, right_knee, left_hip, right_hip), "Should return True when both legs are bent"
+
 if __name__ == "__main__":
     test_roi_to_full_frame()
     test_is_bat_in_hands()
     test_are_hands_at_shoulders()
     test_is_bat_above_hands()
+    test_are_knees_bent()
     print("All tests passed!") 

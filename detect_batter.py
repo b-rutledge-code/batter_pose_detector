@@ -177,7 +177,7 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count):
     roi_frame = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
     pose_results = pose.process(roi_rgb)
     
-    if pose_results.pose_landmarks:
+    if pose_results.pose_landmarks:      
         # Check if batter is in stance
         if is_batting_stance(bat_bbox, pose_results, roi, frame.shape[0]):
             print("Batter is in stance!")
@@ -340,56 +340,49 @@ def are_hands_at_shoulders(full_frame_left_hand, full_frame_right_hand, full_fra
     return (abs(left_hand_y - shoulder_level) <= max_vertical_distance and
             abs(right_hand_y - shoulder_level) <= max_vertical_distance)
 
-def are_knees_bent(full_frame_left_knee, full_frame_right_knee, full_frame_left_hip, full_frame_right_hip):
-    """Check if the batter's knees are bent in a proper batting stance.
-    
-    Args:
-        full_frame_left_knee: Tuple of (x, y) for left knee in full frame, or None if not visible
-        full_frame_right_knee: Tuple of (x, y) for right knee in full frame, or None if not visible
-        full_frame_left_hip: Tuple of (x, y) for left hip in full frame, or None if not visible
-        full_frame_right_hip: Tuple of (x, y) for right hip in full frame, or None if not visible
-        
-    Returns:
-        bool: True if knees are bent appropriately, False if not bent or if legs are not visible
-    """
-    # If we can't see any complete leg (knee + hip), return True
-    if not ((full_frame_left_knee and full_frame_left_hip) or 
-            (full_frame_right_knee and full_frame_right_hip)):
-        print("No complete legs visible - assuming proper knee bend")
+def are_knees_bent(left_knee, right_knee, left_hip, right_hip):
+    # If no complete legs are visible, assume proper stance
+    if not (left_knee and left_hip) and not (right_knee and right_hip):
         return True
         
-    # Define minimum angle threshold (in degrees)
-    min_angle = 15  # Minimum angle between hip and knee
+    min_angle = 12  # Minimum angle from vertical
         
     # Check left leg if visible
-    if full_frame_left_knee and full_frame_left_hip:
-        # Calculate angle between hip and knee
-        dx = full_frame_left_knee[0] - full_frame_left_hip[0]
-        dy = full_frame_left_knee[1] - full_frame_left_hip[1]
-        angle = abs(math.degrees(math.atan2(dy, dx)))
-        print(f"Left knee angle: {angle:.1f}°")
-        
+    left_leg_bent = False
+    if left_knee and left_hip:
+        # Measure angle from vertical (arctan of dx/dy)
+        dx = abs(left_knee.x - left_hip.x)
+        dy = abs(left_knee.y - left_hip.y)
+        if dy == 0:  # Horizontal leg (90 degrees from vertical)
+            angle = 90
+        else:
+            angle = math.degrees(math.atan(dx/dy))
+        print(f"Left leg angle: {angle:.1f}°")
         if angle >= min_angle:
-            return True
+            left_leg_bent = True
             
     # Check right leg if visible
-    if full_frame_right_knee and full_frame_right_hip:
-        # Calculate angle between hip and knee
-        dx = full_frame_right_knee[0] - full_frame_right_hip[0]
-        dy = full_frame_right_knee[1] - full_frame_right_hip[1]
-        angle = abs(math.degrees(math.atan2(dy, dx)))
-        print(f"Right knee angle: {angle:.1f}°")
-        
+    right_leg_bent = False
+    if right_knee and right_hip:
+        # Same measurement for right leg
+        dx = abs(right_knee.x - right_hip.x)
+        dy = abs(right_knee.y - right_hip.y)
+        if dy == 0:  # Horizontal leg (90 degrees from vertical)
+            angle = 90
+        else:
+            angle = math.degrees(math.atan(dx/dy))
+        print(f"Right leg angle: {angle:.1f}°")
         if angle >= min_angle:
-            return True
+            right_leg_bent = True
             
-    # If we can see at least one complete leg but it's not bent properly, return False
-    if ((full_frame_left_knee and full_frame_left_hip) or 
-        (full_frame_right_knee and full_frame_right_hip)):
-        print("Visible leg(s) not bent properly")
-        return False
-        
-    return True
+    # If both legs are visible, both must be bent
+    if (left_knee and left_hip) and (right_knee and right_hip):
+        return left_leg_bent and right_leg_bent
+    # If only one leg is visible, use that one
+    elif left_knee and left_hip:
+        return left_leg_bent
+    else:
+        return right_leg_bent
 
 def is_batting_stance(bat_bbox, pose_results, roi, frame_height):
     """Check if the batter is in a proper batting stance.
