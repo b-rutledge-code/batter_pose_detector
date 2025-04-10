@@ -179,19 +179,32 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count):
     
     if pose_results.pose_landmarks:      
         # Check if batter is in stance
-        if is_batting_stance(bat_bbox, pose_results, roi, frame.shape[0]):
+        if is_batting_stance(bat_bbox, pose_results, roi, frame.shape[0], frame.shape[1]):
             print("Batter is in stance!")
             cv2.putText(frame, "BATTER IN STANCE", (10, 60),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             
-            # Save the frame only if 100 frames have passed since last save
-            if not hasattr(process_pose, 'last_stance_frame') or frame_count - process_pose.last_stance_frame >= 100:
-                output_dir = Path("stance_frames")
-                output_dir.mkdir(exist_ok=True)
-                frame_path = output_dir / f"stance_{int(time.time())}.jpg"
-                cv2.imwrite(str(frame_path), frame)
-                print(f"Saved stance frame to {frame_path}")
+            # Initialize or update stance tracking variables
+            if not hasattr(process_pose, 'last_stance_frame'):
                 process_pose.last_stance_frame = frame_count
+                process_pose.stance_count = 0
+                process_pose.window_start = frame_count
+            
+            # Check if we're within the 200-frame window
+            if frame_count - process_pose.window_start <= 200:
+                # If we haven't saved 3 frames yet, save this one
+                if process_pose.stance_count < 3:
+                    output_dir = Path("stance_frames")
+                    output_dir.mkdir(exist_ok=True)
+                    frame_path = output_dir / f"stance_{int(time.time())}.jpg"
+                    cv2.imwrite(str(frame_path), frame)
+                    print(f"Saved stance frame to {frame_path}")
+                    process_pose.stance_count += 1
+                    process_pose.last_stance_frame = frame_count
+            else:
+                # Reset the window and counter
+                process_pose.window_start = frame_count
+                process_pose.stance_count = 0
         
         # Draw pose landmarks
         mp_drawing.draw_landmarks(
@@ -288,10 +301,10 @@ def is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand, frame
     left_x, left_y = full_frame_left_hand
     right_x, right_y = full_frame_right_hand
     
-    # Check if hands are close together and near bat bottom
+    # Calculate hand distance and check if it's within reasonable range
     hand_distance = abs(left_x - right_x)
-    max_hand_distance = frame_width * 0.07  # 5% of frame width
-    max_vertical_distance = frame_height * 0.09  # 5% of frame height
+    max_hand_distance = frame_width * 0.02  # 2% of frame width
+    max_vertical_distance = frame_height * 0.025  # 2.5% of frame height
     
     # Log the actual distances in pixels
     print(f"Hand distance: {hand_distance:.1f}px (max: {max_hand_distance:.1f}px)")
@@ -384,22 +397,21 @@ def are_knees_bent(left_knee, right_knee, left_hip, right_hip):
     else:
         return right_leg_bent
 
-def is_batting_stance(bat_bbox, pose_results, roi, frame_height):
+def is_batting_stance(bat_bbox, pose_results, roi, frame_height, frame_width):
     """Check if the batter is in a proper batting stance.
     
     A proper batting stance requires:
     1. The bat is being held in the hands
     2. The bat is above the hands
     3. The hands are at shoulder level
+    4. The knees are bent
     
     Args:
-        bat_bbox: Tuple of (x1, y1, x2, y2) for bat bounding box in full frame
-        pose_results: MediaPipe pose detection results
-        roi: Tuple of (x1, y1, x2, y2) for region of interest
-        frame_height: Height of the frame in pixels
-        
-    Returns:
-        bool: True if all conditions for a proper batting stance are met, False otherwise
+        bat_bbox: Bounding box of the bat
+        pose_results: MediaPipe pose results
+        roi: Region of interest containing the batter
+        frame_height: Height of the full frame
+        frame_width: Width of the full frame
     """
     if not pose_results.pose_landmarks:
         return False
@@ -414,6 +426,12 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height):
     right_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
     left_shoulder = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER]
     right_shoulder = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER]
+    
+    # Get knee and hip landmarks
+    left_knee = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_KNEE]
+    right_knee = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_KNEE]
+    left_hip = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_HIP]
+    right_hip = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_HIP]
     
     # Convert to full frame coordinates
     full_frame_left_hand = roi_to_full_frame(
@@ -438,11 +456,12 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height):
     )
     
     # Perform the checks using full frame coordinates
-    return (is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand, roi_width, roi_height) and
+    return (is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand, frame_width, frame_height) and
             is_bat_above_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand) and
             are_hands_at_shoulders(full_frame_left_hand, full_frame_right_hand,
                                  full_frame_left_shoulder, full_frame_right_shoulder,
-                                 frame_height))
+                                 frame_height) and
+            are_knees_bent(left_knee, right_knee, left_hip, right_hip))
 
 def process_frame(frame, model, position_model, pose, mp_drawing, width, height, frame_count):
     """Process a single frame for detections and pose."""
