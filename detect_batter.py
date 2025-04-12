@@ -465,8 +465,8 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height, frame_width):
 
 def process_frame(frame, model, position_model, pose, mp_drawing, width, height, frame_count):
     """Process a single frame for detections and pose."""
-    # Run YOLO detection
-    results = model(frame)
+    # Run YOLO detection with tracking
+    results = model.track(frame, persist=True, tracker="bytetrack.yaml")
     
     # Process YOLO results to get bat
     bat_bbox = None
@@ -477,29 +477,38 @@ def process_frame(frame, model, position_model, pose, mp_drawing, width, height,
             conf = float(box.conf[0])
             cls = int(box.cls[0])
             class_name = r.names[cls]
+            track_id = int(box.id[0]) if box.id is not None else None
             
             if class_name == "baseball bat" and conf > 0.5:
                 bat_bbox = (x1, y1, x2, y2)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{class_name} {conf:.2f}", (x1, y1 - 10),
+                label = f"{class_name} {conf:.2f}"
+                if track_id is not None:
+                    label += f" ID:{track_id}"
+                cv2.putText(frame, label, (x1, y1 - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                print(f"Found bat with confidence {conf:.2f}")
-                break
+                print(f"Found bat with confidence {conf:.2f} ID:{track_id}")
 
     # Get batter bbox
     batter_bbox = None
     if USE_POSITION_DETECTION:
-        # Use position model
-        position_results = position_model(frame)
+        # Use position model with tracking
+        position_results = position_model.track(frame, persist=True, tracker="bytetrack.yaml")
         for r in position_results:
             boxes = r.boxes
             for box in boxes:
                 cls = int(box.cls[0])
                 conf = float(box.conf[0])
+                track_id = int(box.id[0]) if box.id is not None else None
                 if r.names[cls] == "Batter" and conf > 0.7:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     batter_bbox = (x1, y1, x2, y2)
-                    print(f"BATTER DETECTED BY POSITION! Confidence: {conf:.2f}")
+                    label = f"BATTER {conf:.2f}"
+                    if track_id is not None:
+                        label += f" ID:{track_id}"
+                    cv2.putText(frame, label, (x1, y1-10),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                    print(f"BATTER DETECTED BY POSITION! Confidence: {conf:.2f} ID:{track_id}")
                     break
             if batter_bbox:
                 break
@@ -512,9 +521,15 @@ def process_frame(frame, model, position_model, pose, mp_drawing, width, height,
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 conf = float(box.conf[0])
                 cls = int(box.cls[0])
+                track_id = int(box.id[0]) if box.id is not None else None
                 if r.names[cls] == "person" and conf > 0.5:
                     person_bboxes.append((x1, y1, x2, y2))
-                    print(f"Found person with confidence {conf:.2f}")
+                    label = f"Person {conf:.2f}"
+                    if track_id is not None:
+                        label += f" ID:{track_id}"
+                    cv2.putText(frame, label, (x1, y1-10),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                    print(f"Found person with confidence {conf:.2f} ID:{track_id}")
         
         if bat_bbox and person_bboxes:
             batter_idx = find_potential_batters(bat_bbox, person_bboxes)
@@ -536,8 +551,6 @@ def process_frame(frame, model, position_model, pose, mp_drawing, width, height,
 
         # Draw batter box
         cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 0, 255), 2)
-        cv2.putText(frame, "BATTER", (px1, py1-10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     
     return frame
 
