@@ -6,19 +6,21 @@ from pathlib import Path
 from ultralytics import YOLO
 import time
 import math
+import os
 
 # Feature flag to control batter detection method
 USE_POSITION_DETECTION = True  # True = use position model, False = use closest-to-bat
 
-def init_models(model_name='yolov8x.pt'):
-    """Initialize YOLO and MediaPipe models."""
+def init_models():
+    """Initialize YOLO models for bat and player detection"""
     print("Initializing models...")
-    print(f"Loading YOLO model: {model_name}")
-    yolo_model = YOLO(model_name)
+    # Initialize YOLO model for bat detection
+    model = YOLO('yolov8x.pt')  # Changed back to yolov8x.pt
+    model.fuse()
     
-    # Add position model for player detection
-    print("Loading position model: weights-pos-v7.pt")
+    # Initialize position model for player detection
     position_model = YOLO('weights-pos-v7.pt')
+    position_model.fuse()
     
     mp_pose = mp.solutions.pose
     mp_drawing = mp.solutions.drawing_utils
@@ -27,31 +29,38 @@ def init_models(model_name='yolov8x.pt'):
         min_tracking_confidence=0.5,
         model_complexity=2
     )
-    return yolo_model, position_model, pose, mp_drawing
+    return model, position_model, pose, mp_drawing
 
-def setup_video_capture(video_path, save_output=False, playback_fps=15):
-    """Setup video capture and writer."""
+def setup_video_capture(video_path, save_output=False):
+    """Initialize video capture and output writer if needed."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"Error: Could not open video file {video_path}")
-        return None, None, None, None, None
+        raise ValueError(f"Could not open video file: {video_path}")
     
+    # Get video properties
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    print(f"Video properties: {width}x{height} at {fps}fps, {total_frames} frames")
-    print(f"Playing back at {playback_fps}fps")
     
+    # Create cap_info dictionary
+    cap_info = {
+        'width': width,
+        'height': height,
+        'fps': fps,
+        'total_frames': total_frames
+    }
+    
+    # Initialize output writer if save_output is True
     out = None
     if save_output:
-        video_path = Path(video_path)
-        output_path = video_path.parent / f"{video_path.stem}_batter{video_path.suffix}"
+        output_path = os.path.splitext(video_path)[0] + '_output.mp4'
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(str(output_path), fourcc, playback_fps, (width, height))
-        print(f"Saving output to: {output_path}")
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        cap_info['output_path'] = output_path
     
-    return cap, out, width, height, total_frames
+    print(f"Video properties: {width}x{height} at {fps}fps, {total_frames} frames")
+    return cap, out, cap_info
 
 # commented out because unneeded, will remove when new method is working
 # def process_detections(results, frame):
@@ -165,7 +174,7 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count):
     Args:
         frame: Full video frame
         roi: Tuple of (x1, y1, x2, y2) for region of interest
-        bat_bbox: Tuple of (x1, y1, x2, y2) for bat bounding box
+        bat_bbox: Tuple of (x1, y1, x2, y2) for bat bounding box or None
         pose: MediaPipe pose object
         mp_drawing: MediaPipe drawing utilities
         frame_count: Current frame number
@@ -179,7 +188,7 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count):
     
     if pose_results.pose_landmarks:      
         # Check if batter is in stance
-        if is_batting_stance(bat_bbox, pose_results, roi, frame.shape[0], frame.shape[1]):
+        if bat_bbox is None or is_batting_stance(bat_bbox, pose_results, roi, frame.shape[0], frame.shape[1]):
             print("Batter is in stance!")
             cv2.putText(frame, "BATTER IN STANCE", (10, 60),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
@@ -463,81 +472,151 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height, frame_width):
                                  frame_height) and
             are_knees_bent(left_knee, right_knee, left_hip, right_hip))
 
-def process_frame(frame, model, position_model, pose, mp_drawing, width, height, frame_count):
-    """Process a single frame for detections and pose."""
-    # Run YOLO detection with tracking
-    results = model.track(frame, persist=True, tracker="bytetrack.yaml")
+def get_player_position(frame, position_model):
+    """Get all detections in the frame organized by class.
     
-    # Process YOLO results to get bat
-    bat_bbox = None
+    Args:
+        frame: The video frame to process
+        position_model: The YOLO model for position detection
+        
+    Returns:
+        Dictionary where:
+        - Keys are class names (e.g., "person", "Batter", "baseball bat")
+        - Values are lists of tuples (bbox, track_id, confidence) for each detection
+    """
+    detections = {}
+    
+    # Use position model with tracking
+    position_results = position_model.track(frame, persist=True, tracker="bytetrack.yaml")
+    for r in position_results:
+        boxes = r.boxes
+        for box in boxes:
+            cls = int(box.cls[0])
+            conf = float(box.conf[0])
+            track_id = int(box.id[0]) if box.id is not None else None
+            class_name = r.names[cls]
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            bbox = (x1, y1, x2, y2)
+            
+            if class_name not in detections:
+                detections[class_name] = []
+            detections[class_name].append((bbox, track_id, conf))
+            
+            label = f"{class_name} {conf:.2f}"
+            if track_id is not None:
+                label += f" ID:{track_id}"
+            cv2.putText(frame, label, (x1, y1-10),
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+            print(f"{class_name} DETECTED! Confidence: {conf:.2f} ID:{track_id}")
+    
+    return detections
+
+def detect_objects(frame, model, position_model):
+    """Detect all objects in the frame using both YOLO and position models.
+    
+    Args:
+        frame: The video frame to process
+        model: The YOLO model for bat detection
+        position_model: The YOLO model for position detection
+        
+    Returns:
+        Dictionary where:
+        - Keys are class names (e.g., "person", "Batter", "baseball bat")
+        - Values are lists of tuples (bbox, track_id, confidence) for each detection
+    """
+    detections = {}
+    
+    # Use position model with tracking for players
+    position_results = position_model.track(frame, persist=True, tracker="bytetrack.yaml")
+    for r in position_results:
+        boxes = r.boxes
+        for box in boxes:
+            cls = int(box.cls[0])
+            conf = float(box.conf[0])
+            track_id = int(box.id[0]) if box.id is not None else None
+            class_name = r.names[cls]
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            bbox = (x1, y1, x2, y2)
+            
+            if class_name not in detections:
+                detections[class_name] = []
+            detections[class_name].append((bbox, track_id, conf))
+            
+            label = f"{class_name} {conf:.2f}"
+            if track_id is not None:
+                label += f" ID:{track_id}"
+            
+            # Set text and box colors based on class
+            if class_name == "Batter":
+                text_color = (0, 0, 255)  # Red
+                box_color = (0, 0, 255)   # Red
+            elif class_name == "P":
+                text_color = (255, 0, 255)  # Purple
+                box_color = (255, 0, 255)   # Purple
+            else:
+                text_color = (255, 0, 0)  # Blue
+                box_color = (255, 0, 0)   # Blue
+            
+            # Draw bounding box
+            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+            cv2.putText(frame, label, (x1, y1-10),
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 2)
+            print(f"{class_name} DETECTED! Confidence: {conf:.2f} ID:{track_id}")
+    
+    # Use YOLO model for bat detection
+    results = model.track(frame, persist=True, tracker="bytetrack.yaml")
     for r in results:
         boxes = r.boxes
         for box in boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            conf = float(box.conf[0])
             cls = int(box.cls[0])
-            class_name = r.names[cls]
+            conf = float(box.conf[0])
             track_id = int(box.id[0]) if box.id is not None else None
+            class_name = r.names[cls]
             
-            if class_name == "baseball bat" and conf > 0.5:
-                bat_bbox = (x1, y1, x2, y2)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            if class_name == "baseball bat" and conf > 0.6:  # Only detect bats with high confidence
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                bbox = (x1, y1, x2, y2)
+                
+                if class_name not in detections:
+                    detections[class_name] = []
+                detections[class_name].append((bbox, track_id, conf))
+                
                 label = f"{class_name} {conf:.2f}"
                 if track_id is not None:
                     label += f" ID:{track_id}"
-                cv2.putText(frame, label, (x1, y1 - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                print(f"Found bat with confidence {conf:.2f} ID:{track_id}")
+                
+                # Draw bat bounding box in green
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, label, (x1, y1-10),
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                print(f"{class_name} DETECTED! Confidence: {conf:.2f} ID:{track_id}")
+    
+    return detections
 
+def estimate_pose(frame, detections, pose, mp_drawing, width, height, frame_count):
+    """Estimate pose for detected batter.
+    
+    Args:
+        frame: The video frame to process
+        detections: Dictionary of detected objects from detect_objects
+        pose: MediaPipe pose object
+        mp_drawing: MediaPipe drawing utilities
+        width: Frame width
+        height: Frame height
+        frame_count: Current frame number
+        
+    Returns:
+        Processed frame with pose estimation
+    """
     # Get batter bbox
     batter_bbox = None
-    if USE_POSITION_DETECTION:
-        # Use position model with tracking
-        position_results = position_model.track(frame, persist=True, tracker="bytetrack.yaml")
-        for r in position_results:
-            boxes = r.boxes
-            for box in boxes:
-                cls = int(box.cls[0])
-                conf = float(box.conf[0])
-                track_id = int(box.id[0]) if box.id is not None else None
-                if r.names[cls] == "Batter" and conf > 0.7:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    batter_bbox = (x1, y1, x2, y2)
-                    label = f"BATTER {conf:.2f}"
-                    if track_id is not None:
-                        label += f" ID:{track_id}"
-                    cv2.putText(frame, label, (x1, y1-10),
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                    print(f"BATTER DETECTED BY POSITION! Confidence: {conf:.2f} ID:{track_id}")
-                    break
-            if batter_bbox:
-                break
-    else:
-        # Use old method - find closest person to bat
-        person_bboxes = []
-        for r in results:
-            boxes = r.boxes
-            for box in boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                conf = float(box.conf[0])
-                cls = int(box.cls[0])
-                track_id = int(box.id[0]) if box.id is not None else None
-                if r.names[cls] == "person" and conf > 0.5:
-                    person_bboxes.append((x1, y1, x2, y2))
-                    label = f"Person {conf:.2f}"
-                    if track_id is not None:
-                        label += f" ID:{track_id}"
-                    cv2.putText(frame, label, (x1, y1-10),
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-                    print(f"Found person with confidence {conf:.2f} ID:{track_id}")
-        
-        if bat_bbox and person_bboxes:
-            batter_idx = find_potential_batters(bat_bbox, person_bboxes)
-            if batter_idx is not None:
-                batter_bbox = person_bboxes[batter_idx]
+    if "Batter" in detections:
+        # Get the batter with highest confidence
+        batters = detections["Batter"]
+        batter_bbox, _, _ = max(batters, key=lambda x: x[2])
 
-    # Process pose if we found both bat and batter
-    if bat_bbox and batter_bbox:
+    # Process pose if we found a batter
+    if batter_bbox:
         # Calculate ROI
         px1, py1, px2, py2 = batter_bbox
         padding = 20
@@ -547,7 +626,7 @@ def process_frame(frame, model, position_model, pose, mp_drawing, width, height,
             min(width, px2 + padding),
             min(height, py2 + padding)
         )
-        process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count)
+        process_pose(frame, roi, batter_bbox, pose, mp_drawing, frame_count)
 
         # Draw batter box
         cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 0, 255), 2)
@@ -565,8 +644,8 @@ def detect_batter_pose(video_path, save_output=False, playback_fps=15, model_nam
         start_frame: Frame number to start processing from (0-based)
     """
     # Initialize models and video capture
-    model, position_model, pose, mp_drawing = init_models(model_name)
-    cap, out, width, height, total_frames = setup_video_capture(video_path, save_output, playback_fps)
+    model, position_model, pose, mp_drawing = init_models()
+    cap, out, cap_info = setup_video_capture(video_path, save_output)
     if cap is None:
         return
     
@@ -583,13 +662,17 @@ def detect_batter_pose(video_path, save_output=False, playback_fps=15, model_nam
             break
         
         frame_count += 1
-        print(f"\nProcessing frame {frame_count}/{total_frames}")
+        print(f"\nProcessing frame {frame_count}/{cap_info['total_frames']}")
         
         # Draw frame counter
-        draw_frame_info(frame, frame_count, total_frames, height)
+        draw_frame_info(frame, frame_count, cap_info['total_frames'], cap_info['height'])
         
         # Process frame
-        frame = process_frame(frame, model, position_model, pose, mp_drawing, width, height, frame_count)
+        # Detect objects
+        detections = detect_objects(frame, model, position_model)
+        
+        # Estimate pose
+        frame = estimate_pose(frame, detections, pose, mp_drawing, cap_info['width'], cap_info['height'], frame_count)
         
         # Save and display frame
         if save_output:
