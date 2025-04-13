@@ -630,10 +630,12 @@ def estimate_pose(frame, detections, pose, mp_drawing, width, height, frame_coun
 
         # Draw batter box
         cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 0, 255), 2)
+        cv2.putText(frame, "BATTER", (px1, py1-10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     
     return frame
 
-def detect_batter_pose(video_path, save_output=False, playback_fps=15, model_name='yolov8x.pt', start_frame=0):
+def detect_batter_pose(video_path, save_output=False, playback_fps=15, start_frame=0):
     """Main function to detect batter poses in video.
     
     Args:
@@ -699,11 +701,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Detect batter pose in video')
     parser.add_argument('video_path', help='Path to the video file')
     parser.add_argument('--save', action='store_true', help='Save output video')
-    parser.add_argument('--fps', type=int, default=15, help='Playback frame rate (default: 15)')
+    parser.add_argument('--fps', type=int, default=30, help='Playback frame rate (default: 30)')
     parser.add_argument('--model', type=str, default='yolov8x.pt',
                       help='YOLO model to use (default: yolov8x.pt). Options: yolov8n.pt, yolov8s.pt, yolov8m.pt, yolov8l.pt, yolov8x.pt')
     parser.add_argument('--start-frame', type=int, default=0,
                       help='Frame number to start processing from (0-based, default: 0)')
     args = parser.parse_args()
     
-    detect_batter_pose(args.video_path, args.save, args.fps, args.model, args.start_frame) 
+    detect_batter_pose(args.video_path, args.save, args.fps, args.start_frame) 
