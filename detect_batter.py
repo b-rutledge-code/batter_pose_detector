@@ -422,45 +422,6 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height, frame_width):
             are_hands_at_shoulders(left_wrist, right_wrist, left_shoulder, right_shoulder) and
             are_knees_bent(left_knee, right_knee, left_hip, right_hip))
 
-def get_player_position(frame, position_model):
-    """Get all detections in the frame organized by class.
-    
-    Args:
-        frame: The video frame to process
-        position_model: The YOLO model for position detection
-        
-    Returns:
-        Dictionary where:
-        - Keys are class names (e.g., "person", "Batter", "baseball bat")
-        - Values are lists of tuples (bbox, track_id, confidence) for each detection
-    """
-    detections = {}
-    
-    # Use position model with tracking
-    position_results = position_model.track(frame, persist=True, tracker="bytetrack.yaml")
-    for r in position_results:
-        boxes = r.boxes
-        for box in boxes:
-            cls = int(box.cls[0])
-            conf = float(box.conf[0])
-            track_id = int(box.id[0]) if box.id is not None else None
-            class_name = r.names[cls]
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            bbox = (x1, y1, x2, y2)
-            
-            if class_name not in detections:
-                detections[class_name] = []
-            detections[class_name].append((bbox, track_id, conf))
-            
-            label = f"{class_name} {conf:.2f}"
-            if track_id is not None:
-                label += f" ID:{track_id}"
-            cv2.putText(frame, label, (x1, y1-10),
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-            print(f"{class_name} DETECTED! Confidence: {conf:.2f} ID:{track_id}")
-    
-    return detections
-
 def detect_objects(frame, model, position_model):
     """Detect all objects in the frame using both YOLO and position models."""
     detections = {}
