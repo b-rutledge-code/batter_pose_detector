@@ -144,29 +144,34 @@ def find_potential_batters(bat_bbox, person_bboxes):
     
     return None
 
-def roi_to_full_frame(roi_x, roi_y, roi_x1, roi_y1, roi_width, roi_height):
-    """Convert ROI coordinates to full frame coordinates.
+def roi_to_full_frame(x, y, roi_x1, roi_y1, roi_width, roi_height):
+    """Convert coordinates from ROI to full frame coordinates.
     
     Args:
-        roi_x: x coordinate in ROI space (0-1 normalized)
-        roi_y: y coordinate in ROI space (0-1 normalized)
-        roi_x1: starting x coordinate of ROI in full frame
-        roi_y1: starting y coordinate of ROI in full frame
-        roi_width: width of ROI
-        roi_height: height of ROI
+        x, y: Coordinates in ROI (0-1 normalized)
+        roi_x1, roi_y1: Top-left corner of ROI in full frame
+        roi_width, roi_height: Dimensions of ROI
         
     Returns:
-        Tuple of (full_frame_x, full_frame_y)
+        Tuple of (x, y) in full frame coordinates
     """
-    # Convert from normalized (0-1) to ROI pixels
-    roi_pixel_x = roi_x * roi_width
-    roi_pixel_y = roi_y * roi_height
+    # Convert normalized coordinates to ROI pixel coordinates
+    roi_pixel_x = x * roi_width
+    roi_pixel_y = y * roi_height
     
     # Convert to full frame coordinates
-    full_frame_x = roi_pixel_x + roi_x1
-    full_frame_y = roi_pixel_y + roi_y1
+    full_frame_x = roi_x1 + roi_pixel_x
+    full_frame_y = roi_y1 + roi_pixel_y
     
-    return full_frame_x, full_frame_y
+    # Debug output
+    print(f"\nROI to Full Frame Debug:")
+    print(f"Input normalized coords: ({x:.3f}, {y:.3f})")
+    print(f"ROI dimensions: {roi_width}x{roi_height}")
+    print(f"ROI offset: ({roi_x1}, {roi_y1})")
+    print(f"ROI pixel coords: ({roi_pixel_x:.1f}, {roi_pixel_y:.1f})")
+    print(f"Full frame coords: ({full_frame_x:.1f}, {full_frame_y:.1f})")
+    
+    return (full_frame_x, full_frame_y)
 
 def process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count):
     """Process pose detection for the identified batter.
@@ -188,7 +193,7 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count):
     
     if pose_results.pose_landmarks:      
         # Check if batter is in stance
-        if bat_bbox is None or is_batting_stance(bat_bbox, pose_results, roi, frame.shape[0], frame.shape[1]):
+        if bat_bbox is not None and is_batting_stance(bat_bbox, pose_results, roi, frame.shape[0], frame.shape[1]):
             print("Batter is in stance!")
             cv2.putText(frame, "BATTER IN STANCE", (10, 60),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
@@ -222,8 +227,6 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count):
             mp.solutions.pose.POSE_CONNECTIONS
         )
         frame[roi_y1:roi_y2, roi_x1:roi_x2] = roi_frame
-        cv2.putText(frame, "BATTER DETECTED", (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
 def draw_frame_info(frame, frame_count, total_frames, height):
     """Draw frame counter and other information."""
@@ -322,41 +325,39 @@ def is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand, frame
     return (hand_distance <= max_hand_distance and  # Hands are close together
             abs(max(left_y, right_y) - bat_bottom_y) <= max_vertical_distance)  # Hands are near bat bottom
 
-def are_hands_at_shoulders(full_frame_left_hand, full_frame_right_hand, full_frame_left_shoulder, full_frame_right_shoulder, frame_height):
+def are_hands_at_shoulders(left_hand, right_hand, left_shoulder, right_shoulder):
     """Check if the batter's hands are at shoulder level.
     
     Args:
-        full_frame_left_hand: Tuple of (x, y) for left hand in full frame
-        full_frame_right_hand: Tuple of (x, y) for right hand in full frame
-        full_frame_left_shoulder: Tuple of (x, y) for left shoulder in full frame
-        full_frame_right_shoulder: Tuple of (x, y) for right shoulder in full frame
-        frame_height: Height of the frame in pixels
+        left_hand: Tuple of (x, y) for left hand in normalized coordinates (0-1)
+        right_hand: Tuple of (x, y) for right hand in normalized coordinates (0-1)
+        left_shoulder: Tuple of (x, y) for left shoulder in normalized coordinates (0-1)
+        right_shoulder: Tuple of (x, y) for right shoulder in normalized coordinates (0-1)
         
     Returns:
         bool: True if hands are at shoulder level, False otherwise
     """
-    if not all([full_frame_left_hand, full_frame_right_hand, 
-                full_frame_left_shoulder, full_frame_right_shoulder]):
+    if not all([left_hand, right_hand, left_shoulder, right_shoulder]):
         return False
         
     # Get shoulder y-coordinates (average of left and right)
-    left_shoulder_y = full_frame_left_shoulder[1]
-    right_shoulder_y = full_frame_right_shoulder[1]
+    left_shoulder_y = left_shoulder[1]
+    right_shoulder_y = right_shoulder[1]
     shoulder_level = (left_shoulder_y + right_shoulder_y) / 2
     
     # Get hand y-coordinates
-    left_hand_y = full_frame_left_hand[1]
-    right_hand_y = full_frame_right_hand[1]
+    left_hand_y = left_hand[1]
+    right_hand_y = right_hand[1]
     
     # Maximum vertical distance allowed between hands and shoulders
-    # Using 2% of frame height as the threshold
-    max_vertical_distance = frame_height * 0.02
+    # Using 10% of normalized height as the threshold
+    max_vertical_distance = 0.10
     
     # Print debug info
-    print(f"Shoulder level Y: {shoulder_level:.1f}")
-    print(f"Left hand Y: {left_hand_y:.1f}")
-    print(f"Right hand Y: {right_hand_y:.1f}")
-    print(f"Max allowed distance: {max_vertical_distance:.1f}")
+    print(f"Shoulder level Y: {shoulder_level:.3f}")
+    print(f"Left hand Y: {left_hand_y:.3f}")
+    print(f"Right hand Y: {right_hand_y:.3f}")
+    print(f"Max allowed distance: {max_vertical_distance:.3f}")
     
     # Check if both hands are within the allowed distance from shoulder level
     return (abs(left_hand_y - shoulder_level) <= max_vertical_distance and
@@ -442,7 +443,7 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height, frame_width):
     left_hip = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_HIP]
     right_hip = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_HIP]
     
-    # Convert to full frame coordinates
+    # Convert to full frame coordinates for bat-related checks
     full_frame_left_hand = roi_to_full_frame(
         left_wrist.x, left_wrist.y,
         roi_x1, roi_y1,
@@ -453,23 +454,11 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height, frame_width):
         roi_x1, roi_y1,
         roi_width, roi_height
     )
-    full_frame_left_shoulder = roi_to_full_frame(
-        left_shoulder.x, left_shoulder.y,
-        roi_x1, roi_y1,
-        roi_width, roi_height
-    )
-    full_frame_right_shoulder = roi_to_full_frame(
-        right_shoulder.x, right_shoulder.y,
-        roi_x1, roi_y1,
-        roi_width, roi_height
-    )
     
-    # Perform the checks using full frame coordinates
+    # Perform the checks using appropriate coordinate systems
     return (is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand, frame_width, frame_height) and
             is_bat_above_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand) and
-            are_hands_at_shoulders(full_frame_left_hand, full_frame_right_hand,
-                                 full_frame_left_shoulder, full_frame_right_shoulder,
-                                 frame_height) and
+            are_hands_at_shoulders(left_wrist, right_wrist, left_shoulder, right_shoulder) and
             are_knees_bent(left_knee, right_knee, left_hip, right_hip))
 
 def get_player_position(frame, position_model):
@@ -573,7 +562,7 @@ def detect_objects(frame, model, position_model):
             track_id = int(box.id[0]) if box.id is not None else None
             class_name = r.names[cls]
             
-            if class_name == "baseball bat" and conf > 0.6:  # Only detect bats with high confidence
+            if class_name == "baseball bat" and conf > 0.5:  # Only detect bats with high confidence
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 bbox = (x1, y1, x2, y2)
                 
@@ -630,8 +619,6 @@ def estimate_pose(frame, detections, pose, mp_drawing, width, height, frame_coun
 
         # Draw batter box
         cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 0, 255), 2)
-        cv2.putText(frame, "BATTER", (px1, py1-10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     
     return frame
 
