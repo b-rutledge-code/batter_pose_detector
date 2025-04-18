@@ -62,33 +62,6 @@ def setup_video_capture(video_path, save_output=False):
     print(f"Video properties: {width}x{height} at {fps}fps, {total_frames} frames")
     return cap, out, cap_info
 
-# commented out because unneeded, will remove when new method is working
-# def process_detections(results, frame):
-    """Process YOLO detection results to find bats and people."""
-    bat_bbox = None
-    person_bboxes = []
-    
-    for r in results:
-        boxes = r.boxes
-        for box in boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            conf = float(box.conf[0])
-            cls = int(box.cls[0])
-            class_name = r.names[cls]
-            
-            if class_name == "baseball bat" and conf > 0.5:
-                # Draw bat detection box and label
-                color = (0, 255, 0)  # Green for bats
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(frame, f"{class_name} {conf:.2f}", (x1, y1 - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                print(f"Found bat with confidence {conf:.2f}")
-                bat_bbox = (x1, y1, x2, y2)
-            elif class_name == "person" and conf > 0.5:
-                print(f"Found person with confidence {conf:.2f}")
-                person_bboxes.append((x1, y1, x2, y2))
-    
-    return bat_bbox, person_bboxes
 
 def find_potential_batters(bat_bbox, person_bboxes):
     """Find potential batters based on overlap with bat."""
@@ -161,64 +134,44 @@ def roi_to_full_frame(x, y, roi_x1, roi_y1, roi_width, roi_height):
     
     # Convert to full frame coordinates
     full_frame_x = roi_x1 + roi_pixel_x
-    full_frame_y = roi_y1 + roi_pixel_y
+    full_frame_y = roi_y1 + roi_pixel_y  
     
-    # Debug output
+    # Detailed debug output
     print(f"\nROI to Full Frame Debug:")
     print(f"Input normalized coords: ({x:.3f}, {y:.3f})")
     print(f"ROI dimensions: {roi_width}x{roi_height}")
     print(f"ROI offset: ({roi_x1}, {roi_y1})")
     print(f"ROI pixel coords: ({roi_pixel_x:.1f}, {roi_pixel_y:.1f})")
     print(f"Full frame coords: ({full_frame_x:.1f}, {full_frame_y:.1f})")
+    print(f"Frame height: {roi_y1 + roi_height}")
+    print(f"Distance from top: {roi_pixel_y:.1f}px")
+    print(f"Distance from bottom: {(roi_height - roi_pixel_y):.1f}px")
     
     return (full_frame_x, full_frame_y)
 
-def process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count):
-    """Process pose detection for the identified batter.
-    
-    Args:
-        frame: Full video frame
-        roi: Tuple of (x1, y1, x2, y2) for region of interest
-        bat_bbox: Tuple of (x1, y1, x2, y2) for bat bounding box or None
-        pose: MediaPipe pose object
-        mp_drawing: MediaPipe drawing utilities
-        frame_count: Current frame number
-    """
+def process_pose(frame, roi, bat_bbox, pose, mp_drawing):
+    """Process pose detection for the identified batter."""
     roi_x1, roi_y1, roi_x2, roi_y2 = roi
+
     
     # Extract ROI and process pose
     roi_rgb = cv2.cvtColor(frame[roi_y1:roi_y2, roi_x1:roi_x2], cv2.COLOR_BGR2RGB)
     roi_frame = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
     pose_results = pose.process(roi_rgb)
     
-    if pose_results.pose_landmarks:      
+    if pose_results.pose_landmarks:
+        # Debug raw MediaPipe coordinates
+        left_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
+        right_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
+        print(f"\nRaw MediaPipe coordinates:")
+        print(f"Left wrist: ({left_wrist.x:.3f}, {left_wrist.y:.3f})")
+        print(f"Right wrist: ({right_wrist.x:.3f}, {right_wrist.y:.3f})")
+        
         # Check if batter is in stance
-        if bat_bbox is not None and is_batting_stance(bat_bbox, pose_results, roi, frame.shape[0], frame.shape[1]):
+        if bat_bbox is not None and is_batting_stance(bat_bbox, pose_results, roi, frame.shape[0], frame.shape[1], frame):
             print("Batter is in stance!")
             cv2.putText(frame, "BATTER IN STANCE", (10, 60),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            
-            # Initialize or update stance tracking variables
-            if not hasattr(process_pose, 'last_stance_frame'):
-                process_pose.last_stance_frame = frame_count
-                process_pose.stance_count = 0
-                process_pose.window_start = frame_count
-            
-            # Check if we're within the 200-frame window
-            if frame_count - process_pose.window_start <= 200:
-                # If we haven't saved 3 frames yet, save this one
-                if process_pose.stance_count < 3:
-                    output_dir = Path("stance_frames")
-                    output_dir.mkdir(exist_ok=True)
-                    frame_path = output_dir / f"stance_{int(time.time())}.jpg"
-                    cv2.imwrite(str(frame_path), frame)
-                    print(f"Saved stance frame to {frame_path}")
-                    process_pose.stance_count += 1
-                    process_pose.last_stance_frame = frame_count
-            else:
-                # Reset the window and counter
-                process_pose.window_start = frame_count
-                process_pose.stance_count = 0
         
         # Draw pose landmarks
         mp_drawing.draw_landmarks(
@@ -230,21 +183,9 @@ def process_pose(frame, roi, bat_bbox, pose, mp_drawing, frame_count):
 
 def draw_frame_info(frame, frame_count, total_frames, height):
     """Draw frame counter and other information."""
+    # Draw frame counter
     cv2.putText(frame, f"Frame: {frame_count}/{total_frames}", (10, height - 20),
                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-def draw_person_boxes(frame, person_bboxes, batter_idx=None):
-    """Draw bounding boxes for all detected people."""
-    for idx, bbox in enumerate(person_bboxes):
-        px1, py1, px2, py2 = bbox
-        if idx == batter_idx:
-            cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 0, 255), 2)
-            cv2.putText(frame, "BATTER", (px1, py1-10),
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-        else:
-            cv2.rectangle(frame, (px1, py1), (px2, py2), (255, 0, 0), 2)
-            cv2.putText(frame, "Person", (px1, py1-10),
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
 def handle_keyboard_input(key, playback_fps):
     """Handle keyboard controls and return updated playback_fps."""
@@ -315,15 +256,22 @@ def is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand, frame
     
     # Calculate hand distance and check if it's within reasonable range
     hand_distance = abs(left_x - right_x)
-    max_hand_distance = frame_width * 0.02  # 2% of frame width
-    max_vertical_distance = frame_height * 0.025  # 2.5% of frame height
+    max_hand_distance = frame_width * 0.05  # 5% of frame width
+    max_vertical_distance = frame_height * 0.09  # 9% of frame height
+    
+    # Debug output for coordinates
+    print(f"\nBat coordinates:")
+    print(f"Bat bbox: ({bat_x1}, {bat_y1}) to ({bat_x2}, {bat_y2})")
+    print(f"Bat bottom Y: {bat_bottom_y}")
+    print(f"Left hand: ({left_x}, {left_y})")
+    print(f"Right hand: ({right_x}, {right_y})")
     
     # Log the actual distances in pixels
     print(f"Hand distance: {hand_distance:.1f}px (max: {max_hand_distance:.1f}px)")
-    print(f"Vertical distance: {abs(max(left_y, right_y) - bat_bottom_y):.1f}px (max: {max_vertical_distance:.1f}px)")
+    print(f"Vertical distance: {abs(min(left_y, right_y) - bat_bottom_y):.1f}px (max: {max_vertical_distance:.1f}px)")
     
     return (hand_distance <= max_hand_distance and  # Hands are close together
-            abs(max(left_y, right_y) - bat_bottom_y) <= max_vertical_distance)  # Hands are near bat bottom
+            abs(min(left_y, right_y) - bat_bottom_y) <= max_vertical_distance)  # Higher hand is near bat bottom
 
 def are_hands_at_shoulders(left_hand, right_hand, left_shoulder, right_shoulder):
     """Check if the batter's hands are at shoulder level.
@@ -422,6 +370,7 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height, frame_width):
         roi: Region of interest containing the batter
         frame_height: Height of the full frame
         frame_width: Width of the full frame
+        frame: The video frame to draw on
     """
     if not pose_results.pose_landmarks:
         return False
@@ -454,6 +403,18 @@ def is_batting_stance(bat_bbox, pose_results, roi, frame_height, frame_width):
         roi_x1, roi_y1,
         roi_width, roi_height
     )
+    
+    # Draw circles at hand coordinates with larger radius and outline
+    left_x, left_y = map(int, full_frame_left_hand)
+    right_x, right_y = map(int, full_frame_right_hand)
+    
+    # Debug output
+    print(f"\nHand Coordinates Debug:")
+    print(f"Left hand: ({left_x}, {left_y})")
+    print(f"Right hand: ({right_x}, {right_y})")
+    if bat_bbox:
+        bat_x1, bat_y1, bat_x2, bat_y2 = bat_bbox
+        print(f"Bat box: ({bat_x1}, {bat_y1}) to ({bat_x2}, {bat_y2})")
     
     # Perform the checks using appropriate coordinate systems
     return (is_bat_in_hands(bat_bbox, full_frame_left_hand, full_frame_right_hand, frame_width, frame_height) and
@@ -501,18 +462,7 @@ def get_player_position(frame, position_model):
     return detections
 
 def detect_objects(frame, model, position_model):
-    """Detect all objects in the frame using both YOLO and position models.
-    
-    Args:
-        frame: The video frame to process
-        model: The YOLO model for bat detection
-        position_model: The YOLO model for position detection
-        
-    Returns:
-        Dictionary where:
-        - Keys are class names (e.g., "person", "Batter", "baseball bat")
-        - Values are lists of tuples (bbox, track_id, confidence) for each detection
-    """
+    """Detect all objects in the frame using both YOLO and position models."""
     detections = {}
     
     # Use position model with tracking for players
@@ -566,6 +516,11 @@ def detect_objects(frame, model, position_model):
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 bbox = (x1, y1, x2, y2)
                 
+                # Print bat dimensions
+                width = x2 - x1
+                height = y2 - y1
+                print(f"Bat dimensions: {width}x{height} pixels")
+                
                 if class_name not in detections:
                     detections[class_name] = []
                 detections[class_name].append((bbox, track_id, conf))
@@ -582,45 +537,29 @@ def detect_objects(frame, model, position_model):
     
     return detections
 
-def estimate_pose(frame, detections, pose, mp_drawing, width, height, frame_count):
-    """Estimate pose for detected batter.
+def estimate_pose(frame, pose, mp_drawing, roi_x1, roi_y1, roi_x2, roi_y2):
     
-    Args:
-        frame: The video frame to process
-        detections: Dictionary of detected objects from detect_objects
-        pose: MediaPipe pose object
-        mp_drawing: MediaPipe drawing utilities
-        width: Frame width
-        height: Frame height
-        frame_count: Current frame number
+    # Extract ROI and process pose
+    roi_rgb = cv2.cvtColor(frame[roi_y1:roi_y2, roi_x1:roi_x2], cv2.COLOR_BGR2RGB)
+    roi_frame = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
+    pose_results = pose.process(roi_rgb)
+    
+    if pose_results.pose_landmarks:
+        # Debug raw MediaPipe coordinates
+        left_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
+        right_wrist = pose_results.pose_landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
+        print(f"\nRaw MediaPipe coordinates:")
+        print(f"Left wrist: ({left_wrist.x:.3f}, {left_wrist.y:.3f})")
+        print(f"Right wrist: ({right_wrist.x:.3f}, {right_wrist.y:.3f})")
         
-    Returns:
-        Processed frame with pose estimation
-    """
-    # Get batter bbox
-    batter_bbox = None
-    if "Batter" in detections:
-        # Get the batter with highest confidence
-        batters = detections["Batter"]
-        batter_bbox, _, _ = max(batters, key=lambda x: x[2])
-
-    # Process pose if we found a batter
-    if batter_bbox:
-        # Calculate ROI
-        px1, py1, px2, py2 = batter_bbox
-        padding = 20
-        roi = (
-            max(0, px1 - padding),
-            max(0, py1 - padding),
-            min(width, px2 + padding),
-            min(height, py2 + padding)
+        # Draw pose landmarks
+        mp_drawing.draw_landmarks(
+            roi_frame,
+            pose_results.pose_landmarks,
+            mp.solutions.pose.POSE_CONNECTIONS
         )
-        process_pose(frame, roi, batter_bbox, pose, mp_drawing, frame_count)
-
-        # Draw batter box
-        cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 0, 255), 2)
     
-    return frame
+    return roi_frame
 
 def detect_batter_pose(video_path, save_output=False, playback_fps=15, start_frame=0):
     """Main function to detect batter poses in video.
@@ -659,9 +598,31 @@ def detect_batter_pose(video_path, save_output=False, playback_fps=15, start_fra
         # Process frame
         # Detect objects
         detections = detect_objects(frame, model, position_model)
+
+            # Get batter bbox
+        batter_bbox = None
+        if "Batter" in detections:
+            # Get the batter with highest confidence
+            batters = detections["Batter"]
+            batter_bbox, _, _ = max(batters, key=lambda x: x[2])
+
+            # Process pose if we found a batter
+        if batter_bbox:
+            # Calculate ROI
+            px1, py1, px2, py2 = batter_bbox
+            padding = 20
+            roi = (
+                max(0, px1 - padding),
+                max(0, py1 - padding),
+                min(cap_info['width'], px2 + padding),
+                min(cap_info['height'], py2 + padding)
+            )
+            """Process pose detection for the identified batter."""
         
         # Estimate pose
-        frame = estimate_pose(frame, detections, pose, mp_drawing, cap_info['width'], cap_info['height'], frame_count)
+        roi_x1, roi_y1, roi_x2, roi_y2 = roi
+        roi_frame = estimate_pose(frame, pose, mp_drawing, roi_x1, roi_y1, roi_x2, roi_y2)
+        frame[roi_y1:roi_y2, roi_x1:roi_x2] = roi_frame
         
         # Save and display frame
         if save_output:
@@ -684,15 +645,16 @@ def detect_batter_pose(video_path, save_output=False, playback_fps=15, start_fra
         out.release()
     cv2.destroyAllWindows()
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description='Detect batter pose in video')
     parser.add_argument('video_path', help='Path to the video file')
     parser.add_argument('--save', action='store_true', help='Save output video')
     parser.add_argument('--fps', type=int, default=30, help='Playback frame rate (default: 30)')
-    parser.add_argument('--model', type=str, default='yolov8x.pt',
-                      help='YOLO model to use (default: yolov8x.pt). Options: yolov8n.pt, yolov8s.pt, yolov8m.pt, yolov8l.pt, yolov8x.pt')
     parser.add_argument('--start-frame', type=int, default=0,
                       help='Frame number to start processing from (0-based, default: 0)')
     args = parser.parse_args()
     
-    detect_batter_pose(args.video_path, args.save, args.fps, args.start_frame) 
+    detect_batter_pose(args.video_path, args.save, args.fps, args.start_frame)
+
+if __name__ == "__main__":
+    main() 
